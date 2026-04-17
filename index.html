@@ -242,37 +242,73 @@ function unlockAudio(){
   audio.volume=0;
   audio.src=MUSIC_TRACKS[0];
   audio.load();
-  audio.play().then(()=>{
-    audio.pause();
-    audio.currentTime=0;
-    audio.muted=isMuted;
-    audio.volume=TRACK_VOLUME;
-  }).catch(()=>{});
+  const unlockPlay=audio.play();
+  if(unlockPlay!==undefined){
+    unlockPlay.then(()=>{
+      audio.pause();
+      audio.currentTime=0;
+      audio.muted=isMuted;
+      audio.volume=TRACK_VOLUME;
+    }).catch(()=>{});
+  }
   audioUnlocked=true;
 }
-// Strict order: pause → index (caller) → src → load → play. Indicator once per apply.
+let trackSwitchDelayTimer=null;
+let trackPlayFallbackTimer=null;
+let trackSwitchGeneration=0;
+function runPlayWhenReady(gen){
+  if(gen!==trackSwitchGeneration) return;
+  updateTrackIndicator();
+  const playPromise=audio.play();
+  if(playPromise!==undefined){
+    playPromise.catch(err=>console.log('Playback failed',err));
+  }
+}
+// Clean switch: pause, brief wait if something was playing, then src → load → canplay → play() last only.
 function applyPlaybackAtCurrentIndex(){
+  trackSwitchGeneration++;
+  const gen=trackSwitchGeneration;
+  if(trackSwitchDelayTimer) clearTimeout(trackSwitchDelayTimer);
+  if(trackPlayFallbackTimer) clearTimeout(trackPlayFallbackTimer);
+  const wasPlaying=!audio.paused;
   audio.pause();
   audio.currentTime=0;
-  audio.src=MUSIC_TRACKS[currentTrackIdx];
-  audio.muted=isMuted;
-  audio.volume=TRACK_VOLUME;
-  audio.load();
-  audio.play().catch(e=>console.log('iOS Blocked:',e));
-  updateTrackIndicator();
+  const loadAndPlay=()=>{
+    if(gen!==trackSwitchGeneration) return;
+    audio.src=MUSIC_TRACKS[currentTrackIdx];
+    audio.muted=isMuted;
+    audio.volume=TRACK_VOLUME;
+    audio.load();
+    const onReady=()=>{
+      if(gen!==trackSwitchGeneration) return;
+      audio.removeEventListener('canplay',onReady);
+      if(trackPlayFallbackTimer){ clearTimeout(trackPlayFallbackTimer); trackPlayFallbackTimer=null; }
+      runPlayWhenReady(gen);
+    };
+    audio.addEventListener('canplay',onReady,{once:true});
+    trackPlayFallbackTimer=setTimeout(()=>{
+      if(gen!==trackSwitchGeneration) return;
+      audio.removeEventListener('canplay',onReady);
+      trackPlayFallbackTimer=null;
+      runPlayWhenReady(gen);
+    },4000);
+  };
+  if(wasPlaying){
+    trackSwitchDelayTimer=setTimeout(loadAndPlay,90);
+  } else {
+    trackSwitchDelayTimer=setTimeout(loadAndPlay,0);
+  }
 }
 function advanceToNextTrack(){
   currentTrackIdx=(currentTrackIdx+1)%MUSIC_TRACKS.length;
   applyPlaybackAtCurrentIndex();
 }
 function ensureMusicStartedFromStartButton(){
-  audio.play().catch(e=>console.log('iOS Blocked:',e));
   if(!musicStarted) currentTrackIdx=0;
   applyPlaybackAtCurrentIndex();
   musicStarted=true;
 }
 function ensureMusicOnRetry(){
-  audio.play().catch(e=>console.log('iOS Blocked:',e));
   if(!musicStarted){
     currentTrackIdx=0;
     musicStarted=true;
