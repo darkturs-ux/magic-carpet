@@ -121,10 +121,10 @@ let screenFlash={col:'',life:0};
 
 // Background music playlist
 const MUSIC_TRACKS=[
-  'music/track1.mpeg',
-  'music/track2.mpeg',
-  'music/track3.mpeg',
-  'music/track4.mpeg'
+  'track1.mpeg',
+  'track2.mpeg',
+  'track3.mpeg',
+  'track4.mpeg'
 ];
 const TRACK_FADE_SECONDS=2.5;
 const audioPlayer=new Audio();
@@ -134,8 +134,11 @@ let currentTrackIdx=0;
 let fadeTimer=null;
 let fadeStarted=false;
 let musicStarted=false;
+let switchGuard=false;
 let isMuted=localStorage.getItem('mcr6_music_muted')==='1';
 audioPlayer.muted=isMuted;
+const AudioContextCtor=window.AudioContext||window.webkitAudioContext;
+const musicCtx=AudioContextCtor?new AudioContextCtor():null;
 
 const soundBtn=document.createElement('button');
 soundBtn.type='button';
@@ -172,12 +175,17 @@ function loadAndPlayTrack(idx){
   currentTrackIdx=(idx+MUSIC_TRACKS.length)%MUSIC_TRACKS.length;
   clearFadeTimer();
   fadeStarted=false;
+  switchGuard=false;
   audioPlayer.src=MUSIC_TRACKS[currentTrackIdx];
   audioPlayer.currentTime=0;
   audioPlayer.volume=0.6;
-  audioPlayer.play().catch(()=>{});
+  audioPlayer.play().catch(err=>{
+    console.warn('[music] Playback blocked on this device/browser.', err);
+  });
 }
 function playNextTrack(){
+  if(switchGuard) return;
+  switchGuard=true;
   loadAndPlayTrack((currentTrackIdx+1)%MUSIC_TRACKS.length);
 }
 function beginFadeOut(){
@@ -194,10 +202,21 @@ function beginFadeOut(){
     if(t>=1) clearFadeTimer();
   },50);
 }
-function ensureMusicStarted(){
+async function ensureMusicStartedFromStartButton(){
   if(musicStarted) return;
-  musicStarted=true;
+  if(musicCtx && musicCtx.state==='suspended'){
+    try{
+      await musicCtx.resume();
+    }catch(err){
+      console.warn('[music] AudioContext resume blocked on iOS/browser.', err);
+    }
+  }
   loadAndPlayTrack(0);
+  if(audioPlayer.paused){
+    console.warn('[music] Sound is blocked. Tap START again or check iOS sound settings.');
+    return;
+  }
+  musicStarted=true;
 }
 
 audioPlayer.addEventListener('timeupdate',()=>{
@@ -214,8 +233,15 @@ soundBtn.addEventListener('click',()=>{
   audioPlayer.muted=isMuted;
   localStorage.setItem('mcr6_music_muted',isMuted?'1':'0');
   updateSoundButton();
-  ensureMusicStarted();
 });
+
+setInterval(()=>{
+  if(!musicStarted || audioPlayer.paused) return;
+  const remaining=audioPlayer.duration-audioPlayer.currentTime;
+  if(Number.isFinite(remaining) && remaining<=0.12){
+    playNextTrack();
+  }
+},250);
 
 // Coin types
 const COIN_TYPES=[
@@ -261,7 +287,6 @@ function initGame(){
 }
 
 function tap(){
-  ensureMusicStarted();
   if(state==='idle'){
     state='playing';
     document.getElementById('overlay').classList.add('hidden');
@@ -285,7 +310,7 @@ C.addEventListener('touchend',e=>{e.preventDefault();held=false;},{passive:false
 C.addEventListener('mousedown',()=>{held=true;tap();});
 C.addEventListener('mouseup',()=>held=false);
 document.getElementById('btn-start').addEventListener('click',()=>{
-  ensureMusicStarted();
+  ensureMusicStartedFromStartButton();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
@@ -293,7 +318,6 @@ document.getElementById('btn-start').addEventListener('click',()=>{
   pvy=TAPV();
 });
 document.getElementById('btn-retry').addEventListener('click',()=>{
-  ensureMusicStarted();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
