@@ -79,18 +79,44 @@ const iGenBad  = document.getElementById('img-gen');
 const iBg      = document.getElementById('img-bg');
 const iJasmine = document.getElementById('img-jas');
 
-// Create a blue-tinted version of the enemy genie sprite
+// Force-preload enemy genie sprite to avoid "DANGER without sprite" race.
 const iGenBlue=document.createElement('canvas');
-iGenBad.onload=function(){
-  iGenBlue.width=iGenBad.naturalWidth; iGenBlue.height=iGenBad.naturalHeight;
+let genieReady=false;
+let resolveGenieReady;
+const genieReadyPromise=new Promise(res=>{resolveGenieReady=res;});
+function buildBlueGenieSprite(srcImg){
+  iGenBlue.width=srcImg.naturalWidth;
+  iGenBlue.height=srcImg.naturalHeight;
   const gx=iGenBlue.getContext('2d');
-  gx.drawImage(iGenBad,0,0);
+  gx.drawImage(srcImg,0,0);
   gx.globalCompositeOperation='multiply';
   gx.fillStyle='rgba(30,144,255,0.78)';
   gx.fillRect(0,0,iGenBlue.width,iGenBlue.height);
   gx.globalCompositeOperation='destination-in';
-  gx.drawImage(iGenBad,0,0);
+  gx.drawImage(srcImg,0,0);
+}
+function markGenieReady(){
+  if(genieReady) return;
+  genieReady=true;
+  resolveGenieReady();
+}
+const geniePreloadImg=new Image();
+geniePreloadImg.onload=()=>{
+  buildBlueGenieSprite(geniePreloadImg);
+  markGenieReady();
 };
+geniePreloadImg.onerror=()=>{
+  console.warn('[genie] Preload failed, using fallback image source.');
+  if(iGenBad.complete && iGenBad.naturalWidth>0){
+    buildBlueGenieSprite(iGenBad);
+  }
+  markGenieReady();
+};
+geniePreloadImg.src=iGenBad.src;
+if(geniePreloadImg.complete && geniePreloadImg.naturalWidth>0){
+  buildBlueGenieSprite(geniePreloadImg);
+  markGenieReady();
+}
 
 const iBoy=document.createElement('canvas');
 iBoyOrig.onload=function(){
@@ -120,12 +146,13 @@ const POWER_DUR=300; // 5 sec at 60fps
 let screenFlash={col:'',life:0};
 
 // Background music playlist
+const AUDIO_CACHE_BUST='v='+Math.floor(Math.random()*1e9);
 const MUSIC_TRACKS=[
   'music/track1.mpeg',
   'music/track2.mpeg',
   'music/track3.mpeg',
   'music/track4.mpeg'
-];
+].map(p=>p+'?'+AUDIO_CACHE_BUST);
 const TRACK_FADE_SECONDS=2.5;
 const audioPlayer=new Audio();
 audioPlayer.preload='auto';
@@ -234,6 +261,7 @@ async function loadAndPlayTrack(idx){
   clearFadeTimer();
   fadeStarted=false;
   switchGuard=false;
+  audioPlayer.pause();
   audioPlayer.src=MUSIC_TRACKS[currentTrackIdx];
   audioPlayer.currentTime=0;
   audioPlayer.volume=0.6;
@@ -398,18 +426,20 @@ C.addEventListener('touchstart',e=>{e.preventDefault();held=true;tap();},{passiv
 C.addEventListener('touchend',e=>{e.preventDefault();held=false;},{passive:false});
 C.addEventListener('mousedown',()=>{held=true;tap();});
 C.addEventListener('mouseup',()=>held=false);
-document.getElementById('btn-start').addEventListener('click',()=>{
-  resumeAudioContextIfNeeded();
-  ensureMusicStartedFromStartButton();
+document.getElementById('btn-start').addEventListener('click',async ()=>{
+  await genieReadyPromise;
+  await unlockAudioOnce();
+  await ensureMusicStartedFromStartButton();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
   initGame();
   pvy=TAPV();
 });
-document.getElementById('btn-retry').addEventListener('click',()=>{
-  resumeAudioContextIfNeeded();
-  ensureMusicOnRetry();
+document.getElementById('btn-retry').addEventListener('click',async ()=>{
+  await genieReadyPromise;
+  await unlockAudioOnce();
+  await ensureMusicOnRetry();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
