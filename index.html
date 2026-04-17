@@ -135,6 +135,7 @@ let fadeTimer=null;
 let fadeStarted=false;
 let musicStarted=false;
 let switchGuard=false;
+let audioUnlocked=false;
 let isMuted=localStorage.getItem('mcr6_music_muted')==='1';
 audioPlayer.muted=isMuted;
 const AudioContextCtor=window.AudioContext||window.webkitAudioContext;
@@ -192,7 +193,43 @@ function clearFadeTimer(){
     fadeTimer=null;
   }
 }
-function loadAndPlayTrack(idx){
+async function resumeAudioContextIfNeeded(){
+  if(musicCtx && musicCtx.state==='suspended'){
+    try{
+      await musicCtx.resume();
+    }catch(err){
+      console.warn('[music] AudioContext resume blocked on iOS/browser.', err);
+    }
+  }
+}
+async function unlockAudioOnce(){
+  if(audioUnlocked) return;
+  await resumeAudioContextIfNeeded();
+  if(audioPlayer.paused){
+    if(!audioPlayer.src){
+      audioPlayer.src=MUSIC_TRACKS[currentTrackIdx];
+    }
+    const prevMuted=audioPlayer.muted;
+    const prevVol=audioPlayer.volume;
+    audioPlayer.muted=true;
+    audioPlayer.volume=0;
+    audioPlayer.load();
+    try{
+      await audioPlayer.play();
+      audioPlayer.pause();
+      audioPlayer.currentTime=0;
+      audioUnlocked=true;
+    }catch(err){
+      console.warn('[music] Audio unlock touch failed on this device/browser.', err);
+    }finally{
+      audioPlayer.muted=isMuted;
+      audioPlayer.volume=prevVol;
+    }
+    return;
+  }
+  audioUnlocked=true;
+}
+async function loadAndPlayTrack(idx){
   currentTrackIdx=(idx+MUSIC_TRACKS.length)%MUSIC_TRACKS.length;
   clearFadeTimer();
   fadeStarted=false;
@@ -200,6 +237,8 @@ function loadAndPlayTrack(idx){
   audioPlayer.src=MUSIC_TRACKS[currentTrackIdx];
   audioPlayer.currentTime=0;
   audioPlayer.volume=0.6;
+  await resumeAudioContextIfNeeded();
+  audioPlayer.load();
   audioPlayer.play().catch(err=>{
     console.warn('[music] Playback blocked on this device/browser.', err);
   });
@@ -225,14 +264,8 @@ function beginFadeOut(){
 }
 async function ensureMusicStartedFromStartButton(){
   if(musicStarted) return;
-  if(musicCtx && musicCtx.state==='suspended'){
-    try{
-      await musicCtx.resume();
-    }catch(err){
-      console.warn('[music] AudioContext resume blocked on iOS/browser.', err);
-    }
-  }
-  loadAndPlayTrack(0);
+  await resumeAudioContextIfNeeded();
+  await loadAndPlayTrack(0);
   if(audioPlayer.paused){
     console.warn('[music] Sound is blocked. Tap START again or check iOS sound settings.');
     return;
@@ -240,25 +273,21 @@ async function ensureMusicStartedFromStartButton(){
   musicStarted=true;
 }
 async function ensureMusicOnRetry(){
-  if(musicCtx && musicCtx.state==='suspended'){
-    try{
-      await musicCtx.resume();
-    }catch(err){
-      console.warn('[music] AudioContext resume blocked on retry.', err);
-    }
-  }
+  await resumeAudioContextIfNeeded();
   if(!musicStarted){
-    loadAndPlayTrack(0);
+    await loadAndPlayTrack(0);
     if(!audioPlayer.paused) musicStarted=true;
     return;
   }
   if(audioPlayer.paused){
+    audioPlayer.load();
     audioPlayer.play().catch(err=>{
       console.warn('[music] Retry play blocked on this device/browser.', err);
       playNextTrack();
     });
   } else {
     // Extra kick for iOS: invoke play in user gesture path.
+    audioPlayer.load();
     audioPlayer.play().catch(()=>{});
   }
 }
@@ -277,18 +306,23 @@ audioPlayer.addEventListener('error',()=>{
   playNextTrack();
 });
 soundBtn.addEventListener('click',()=>{
+  resumeAudioContextIfNeeded();
   isMuted=!isMuted;
   audioPlayer.muted=isMuted;
   localStorage.setItem('mcr6_music_muted',isMuted?'1':'0');
   updateSoundButton();
 });
 nextTrackBtn.addEventListener('click',()=>{
+  resumeAudioContextIfNeeded();
   if(!musicStarted){
     console.warn('[music] Press START first to unlock audio on iOS.');
     return;
   }
   playNextTrack();
 });
+document.addEventListener('touchstart',()=>{
+  unlockAudioOnce();
+},{passive:true,once:true});
 
 setInterval(()=>{
   if(!musicStarted) return;
@@ -365,6 +399,7 @@ C.addEventListener('touchend',e=>{e.preventDefault();held=false;},{passive:false
 C.addEventListener('mousedown',()=>{held=true;tap();});
 C.addEventListener('mouseup',()=>held=false);
 document.getElementById('btn-start').addEventListener('click',()=>{
+  resumeAudioContextIfNeeded();
   ensureMusicStartedFromStartButton();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
@@ -373,6 +408,7 @@ document.getElementById('btn-start').addEventListener('click',()=>{
   pvy=TAPV();
 });
 document.getElementById('btn-retry').addEventListener('click',()=>{
+  resumeAudioContextIfNeeded();
   ensureMusicOnRetry();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
