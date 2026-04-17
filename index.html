@@ -236,9 +236,12 @@ function resumeAudioContextIfNeeded(){
 function unlockAudio(){
   if(audioUnlocked) return;
   resumeAudioContextIfNeeded();
+  audio.pause();
+  audio.currentTime=0;
   audio.muted=true;
   audio.volume=0;
-  audio.src=MUSIC_TRACKS[currentTrackIdx];
+  audio.src=MUSIC_TRACKS[0];
+  audio.load();
   audio.play().then(()=>{
     audio.pause();
     audio.currentTime=0;
@@ -247,42 +250,40 @@ function unlockAudio(){
   }).catch(()=>{});
   audioUnlocked=true;
 }
-function playCurrentTrack(){
+// Strict order: pause → index (caller) → src → load → play. Indicator once per apply.
+function applyPlaybackAtCurrentIndex(){
   audio.pause();
-  audio.src=MUSIC_TRACKS[currentTrackIdx];
   audio.currentTime=0;
+  audio.src=MUSIC_TRACKS[currentTrackIdx];
   audio.muted=isMuted;
   audio.volume=TRACK_VOLUME;
   audio.load();
   audio.play().catch(e=>console.log('iOS Blocked:',e));
   updateTrackIndicator();
 }
-function playNextTrack(){
+function advanceToNextTrack(){
   currentTrackIdx=(currentTrackIdx+1)%MUSIC_TRACKS.length;
-  playCurrentTrack();
+  applyPlaybackAtCurrentIndex();
 }
 function ensureMusicStartedFromStartButton(){
-  // iOS gesture-bound forced play attempt.
   audio.play().catch(e=>console.log('iOS Blocked:',e));
   if(!musicStarted) currentTrackIdx=0;
-  playCurrentTrack();
+  applyPlaybackAtCurrentIndex();
   musicStarted=true;
 }
 function ensureMusicOnRetry(){
-  // iOS gesture-bound forced play attempt.
   audio.play().catch(e=>console.log('iOS Blocked:',e));
   if(!musicStarted){
     currentTrackIdx=0;
     musicStarted=true;
   }
-  playCurrentTrack();
+  applyPlaybackAtCurrentIndex();
 }
 audio.addEventListener('ended',()=>{
-  playNextTrack();
+  advanceToNextTrack();
 });
 audio.addEventListener('error',()=>{
-  console.warn('[music] Track failed, skipping to next.');
-  playNextTrack();
+  console.warn('[music] Track load/playback error (no auto-skip).');
 });
 soundBtn.addEventListener('click',()=>{
   resumeAudioContextIfNeeded();
@@ -297,7 +298,7 @@ nextTrackBtn.addEventListener('click',()=>{
     console.warn('[music] Press START first to unlock audio on iOS.');
     return;
   }
-  playNextTrack();
+  advanceToNextTrack();
 });
 document.addEventListener('touchstart',()=>{
   unlockAudio();
