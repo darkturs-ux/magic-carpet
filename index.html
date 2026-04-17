@@ -54,8 +54,8 @@ canvas{display:block;}
     <h1>Magic Carpet Ride</h1>
     <p>Tap or hold to fly.<br>
     🟡 Gold coin = 1pt &nbsp; ⚪ Silver = 2pt &nbsp; 🔴 Ruby = 3pt<br>
-    🧞 <b style="color:#00ff88">Green genie</b> = invincible 5s<br>
-    🧞 <b style="color:#c8a0ff">Purple genie</b> = instant death!</p>
+    👸 <b style="color:#1e90ff">Jasmine</b> = shield 5s!<br>
+    🧞 <b style="color:#1e90ff">Blue Genie</b> = instant death!</p>
     <button class="btn" id="btn-start">✦ FLY ✦</button>
   </div>
   <div class="panel hidden" id="panel-dead">
@@ -79,15 +79,15 @@ const iGenBad  = document.getElementById('img-gen');
 const iBg      = document.getElementById('img-bg');
 const iJasmine = document.getElementById('img-jas');
 
-// Good genie: tint the bad genie green using offscreen canvas
-const iGenGood=document.createElement('canvas');
+// Create a blue-tinted version of the enemy genie sprite
+const iGenBlue=document.createElement('canvas');
 iGenBad.onload=function(){
-  iGenGood.width=iGenBad.naturalWidth; iGenGood.height=iGenBad.naturalHeight;
-  const gx=iGenGood.getContext('2d');
+  iGenBlue.width=iGenBad.naturalWidth; iGenBlue.height=iGenBad.naturalHeight;
+  const gx=iGenBlue.getContext('2d');
   gx.drawImage(iGenBad,0,0);
   gx.globalCompositeOperation='multiply';
-  gx.fillStyle='rgba(0,255,150,0.55)';
-  gx.fillRect(0,0,iGenGood.width,iGenGood.height);
+  gx.fillStyle='rgba(30,144,255,0.78)';
+  gx.fillRect(0,0,iGenBlue.width,iGenBlue.height);
   gx.globalCompositeOperation='destination-in';
   gx.drawImage(iGenBad,0,0);
 };
@@ -121,10 +121,10 @@ let screenFlash={col:'',life:0};
 
 // Background music playlist
 const MUSIC_TRACKS=[
-  'track1.mpeg',
-  'track2.mpeg',
-  'track3.mpeg',
-  'track4.mpeg'
+  'music/track1.mpeg',
+  'music/track2.mpeg',
+  'music/track3.mpeg',
+  'music/track4.mpeg'
 ];
 const TRACK_FADE_SECONDS=2.5;
 const audioPlayer=new Audio();
@@ -159,6 +159,27 @@ soundBtn.style.color='#fff';
 soundBtn.style.boxShadow='0 4px 14px rgba(0,0,0,0.35)';
 soundBtn.style.userSelect='none';
 document.body.appendChild(soundBtn);
+const nextTrackBtn=document.createElement('button');
+nextTrackBtn.type='button';
+nextTrackBtn.setAttribute('aria-label','Next track');
+nextTrackBtn.style.position='fixed';
+nextTrackBtn.style.top='14px';
+nextTrackBtn.style.right='96px';
+nextTrackBtn.style.zIndex='30';
+nextTrackBtn.style.pointerEvents='auto';
+nextTrackBtn.style.width='42px';
+nextTrackBtn.style.height='34px';
+nextTrackBtn.style.border='none';
+nextTrackBtn.style.borderRadius='12px';
+nextTrackBtn.style.cursor='pointer';
+nextTrackBtn.style.font='700 20px Georgia,serif';
+nextTrackBtn.style.lineHeight='1';
+nextTrackBtn.style.background='linear-gradient(135deg,#0d4782,#1e90ff)';
+nextTrackBtn.style.color='#e8f3ff';
+nextTrackBtn.style.boxShadow='0 4px 14px rgba(0,0,0,0.35)';
+nextTrackBtn.style.userSelect='none';
+nextTrackBtn.textContent='𝄞';
+document.body.appendChild(nextTrackBtn);
 
 function updateSoundButton(){
   soundBtn.textContent=isMuted?'🔇 OFF':'🔊 ON';
@@ -218,6 +239,29 @@ async function ensureMusicStartedFromStartButton(){
   }
   musicStarted=true;
 }
+async function ensureMusicOnRetry(){
+  if(musicCtx && musicCtx.state==='suspended'){
+    try{
+      await musicCtx.resume();
+    }catch(err){
+      console.warn('[music] AudioContext resume blocked on retry.', err);
+    }
+  }
+  if(!musicStarted){
+    loadAndPlayTrack(0);
+    if(!audioPlayer.paused) musicStarted=true;
+    return;
+  }
+  if(audioPlayer.paused){
+    audioPlayer.play().catch(err=>{
+      console.warn('[music] Retry play blocked on this device/browser.', err);
+      playNextTrack();
+    });
+  } else {
+    // Extra kick for iOS: invoke play in user gesture path.
+    audioPlayer.play().catch(()=>{});
+  }
+}
 
 audioPlayer.addEventListener('timeupdate',()=>{
   const remaining=audioPlayer.duration-audioPlayer.currentTime;
@@ -228,17 +272,28 @@ audioPlayer.addEventListener('timeupdate',()=>{
 audioPlayer.addEventListener('ended',()=>{
   playNextTrack();
 });
+audioPlayer.addEventListener('error',()=>{
+  console.warn('[music] Track failed, skipping to next.');
+  playNextTrack();
+});
 soundBtn.addEventListener('click',()=>{
   isMuted=!isMuted;
   audioPlayer.muted=isMuted;
   localStorage.setItem('mcr6_music_muted',isMuted?'1':'0');
   updateSoundButton();
 });
+nextTrackBtn.addEventListener('click',()=>{
+  if(!musicStarted){
+    console.warn('[music] Press START first to unlock audio on iOS.');
+    return;
+  }
+  playNextTrack();
+});
 
 setInterval(()=>{
-  if(!musicStarted || audioPlayer.paused) return;
+  if(!musicStarted) return;
   const remaining=audioPlayer.duration-audioPlayer.currentTime;
-  if(Number.isFinite(remaining) && remaining<=0.12){
+  if(audioPlayer.paused || (Number.isFinite(remaining) && remaining<=0.12)){
     playNextTrack();
   }
 },250);
@@ -318,6 +373,7 @@ document.getElementById('btn-start').addEventListener('click',()=>{
   pvy=TAPV();
 });
 document.getElementById('btn-retry').addEventListener('click',()=>{
+  ensureMusicOnRetry();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
@@ -579,17 +635,18 @@ function drawGenies(){
     const bob=Math.sin(g.phase)*6;
     ctx.save();ctx.translate(g.x,g.y+bob);
     // Glow colour depends on type
-    const glowCol=g.good?'#00e8d4':'#7b2ff7';
+    const glowCol=g.good?'#00e8d4':'#1e90ff';
     ctx.globalAlpha=0.18+0.08*Math.sin(g.phase*1.3);
     const glow=ctx.createRadialGradient(0,0,0,0,0,gw);
     glow.addColorStop(0,glowCol);glow.addColorStop(1,'transparent');
     ctx.fillStyle=glow;ctx.beginPath();ctx.arc(0,0,gw,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=1;
-    const img=g.good?iJasmine:iGenBad;
+    const badImg=(iGenBlue.width>0||(iGenBlue.complete&&iGenBlue.naturalWidth>0))?iGenBlue:iGenBad;
+    const img=g.good?iJasmine:badImg;
     if(img.width>0||( img.complete&&img.naturalWidth>0))
       ctx.drawImage(img,-gw/2,-gh/2,gw,gh);
     // Label above
-    ctx.fillStyle=g.good?'#00e8d4':'#ff88ff';
+    ctx.fillStyle=g.good?'#00e8d4':'#1e90ff';
     ctx.font='bold '+(11*(W/400))+'px Helvetica Neue,sans-serif';
     ctx.textAlign='center';
     ctx.fillText(g.good?'✨ BONUS':'☠ DANGER',-0,-gh/2-8*(H/700));
