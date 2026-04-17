@@ -154,16 +154,14 @@ const MUSIC_TRACKS=[
   'music/track4.mpeg'
 ].map(p=>p+'?'+AUDIO_CACHE_BUST);
 const TRACK_VOLUME=0.6;
-const tracks=MUSIC_TRACKS.map((src,idx)=>{
-  const a=new Audio(src);
-  a.preload='auto';
-  a.dataset.idx=String(idx);
-  return a;
-});
+const audio=new Audio();
+audio.preload='auto';
+audio.volume=TRACK_VOLUME;
 let currentTrackIdx=0;
 let musicStarted=false;
 let audioUnlocked=false;
 let isMuted=localStorage.getItem('mcr6_music_muted')==='1';
+audio.muted=isMuted;
 const AudioContextCtor=window.AudioContext||window.webkitAudioContext;
 const musicCtx=AudioContextCtor?new AudioContextCtor():null;
 
@@ -207,11 +205,28 @@ nextTrackBtn.style.boxShadow='0 4px 14px rgba(0,0,0,0.35)';
 nextTrackBtn.style.userSelect='none';
 nextTrackBtn.textContent='𝄞';
 document.body.appendChild(nextTrackBtn);
+const trackIndicator=document.createElement('div');
+trackIndicator.style.position='fixed';
+trackIndicator.style.top='16px';
+trackIndicator.style.right='144px';
+trackIndicator.style.zIndex='30';
+trackIndicator.style.padding='6px 9px';
+trackIndicator.style.borderRadius='10px';
+trackIndicator.style.font='700 12px "Helvetica Neue",sans-serif';
+trackIndicator.style.background='rgba(10,20,45,0.7)';
+trackIndicator.style.color='#d8ecff';
+trackIndicator.style.boxShadow='0 4px 12px rgba(0,0,0,0.28)';
+trackIndicator.style.userSelect='none';
+document.body.appendChild(trackIndicator);
 
 function updateSoundButton(){
   soundBtn.textContent=isMuted?'🔇 OFF':'🔊 ON';
 }
 updateSoundButton();
+function updateTrackIndicator(){
+  trackIndicator.textContent='♪ '+(currentTrackIdx+1)+'/'+MUSIC_TRACKS.length;
+}
+updateTrackIndicator();
 
 function resumeAudioContextIfNeeded(){
   if(musicCtx && musicCtx.state==='suspended'){
@@ -221,83 +236,58 @@ function resumeAudioContextIfNeeded(){
 function unlockAudio(){
   if(audioUnlocked) return;
   resumeAudioContextIfNeeded();
-  for(const a of tracks){
-    const prevMuted=a.muted;
-    const prevVol=a.volume;
-    a.muted=true;
-    a.volume=0;
-    a.play().catch(()=>{});
-    a.pause();
-    a.currentTime=0;
-    a.muted=isMuted||prevMuted;
-    a.volume=prevVol||TRACK_VOLUME;
-  }
+  audio.muted=true;
+  audio.volume=0;
+  audio.src=MUSIC_TRACKS[currentTrackIdx];
+  audio.play().then(()=>{
+    audio.pause();
+    audio.currentTime=0;
+    audio.muted=isMuted;
+    audio.volume=TRACK_VOLUME;
+  }).catch(()=>{});
   audioUnlocked=true;
 }
-function stopTrack(idx){
-  const a=tracks[idx];
-  if(!a) return;
-  a.pause();
-  a.currentTime=0;
-}
-function playTrack(idx){
-  currentTrackIdx=(idx+MUSIC_TRACKS.length)%MUSIC_TRACKS.length;
-  const a=tracks[currentTrackIdx];
-  a.volume=TRACK_VOLUME;
-  a.muted=isMuted;
-  resumeAudioContextIfNeeded();
-  a.play().catch(err=>{
-    console.warn('[music] Playback blocked on this device/browser.', err);
-  });
+function playCurrentTrack(){
+  audio.pause();
+  audio.src=MUSIC_TRACKS[currentTrackIdx];
+  audio.currentTime=0;
+  audio.muted=isMuted;
+  audio.volume=TRACK_VOLUME;
+  audio.load();
+  audio.play().catch(e=>console.log('iOS Blocked:',e));
+  updateTrackIndicator();
 }
 function playNextTrack(){
-  stopTrack(currentTrackIdx);
-  currentTrackIdx=(currentTrackIdx+1)%tracks.length;
-  playTrack(currentTrackIdx);
+  currentTrackIdx=(currentTrackIdx+1)%MUSIC_TRACKS.length;
+  playCurrentTrack();
 }
 function ensureMusicStartedFromStartButton(){
-  if(musicStarted) return;
-  playTrack(0);
-  if(tracks[0].paused){
-    console.warn('[music] Sound is blocked. Tap START again or check iOS sound settings.');
-    return;
-  }
+  // iOS gesture-bound forced play attempt.
+  audio.play().catch(e=>console.log('iOS Blocked:',e));
+  if(!musicStarted) currentTrackIdx=0;
+  playCurrentTrack();
   musicStarted=true;
 }
 function ensureMusicOnRetry(){
+  // iOS gesture-bound forced play attempt.
+  audio.play().catch(e=>console.log('iOS Blocked:',e));
   if(!musicStarted){
-    playTrack(0);
-    if(!tracks[0].paused) musicStarted=true;
-    return;
+    currentTrackIdx=0;
+    musicStarted=true;
   }
-  const a=tracks[currentTrackIdx];
-  if(a.paused){
-    a.play().catch(err=>{
-      console.warn('[music] Retry play blocked on this device/browser.', err);
-    });
-  }
+  playCurrentTrack();
 }
-
-tracks.forEach((a,idx)=>{
-  a.muted=isMuted;
-  a.volume=TRACK_VOLUME;
-  a.addEventListener('ended',()=>{
-    if(idx!==currentTrackIdx) return;
-    stopTrack(currentTrackIdx);
-    currentTrackIdx=(currentTrackIdx+1)%tracks.length;
-    playTrack(currentTrackIdx);
-  });
-  a.addEventListener('error',()=>{
-    if(idx===currentTrackIdx){
-      console.warn('[music] Track failed, skipping to next.');
-      playNextTrack();
-    }
-  });
+audio.addEventListener('ended',()=>{
+  playNextTrack();
+});
+audio.addEventListener('error',()=>{
+  console.warn('[music] Track failed, skipping to next.');
+  playNextTrack();
 });
 soundBtn.addEventListener('click',()=>{
   resumeAudioContextIfNeeded();
   isMuted=!isMuted;
-  tracks.forEach(a=>{a.muted=isMuted;});
+  audio.muted=isMuted;
   localStorage.setItem('mcr6_music_muted',isMuted?'1':'0');
   updateSoundButton();
 });
