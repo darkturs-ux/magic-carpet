@@ -154,7 +154,7 @@ const MUSIC_TRACKS=[
   'music/track4.mpeg'
 ].map(p=>p+'?'+AUDIO_CACHE_BUST);
 const TRACK_VOLUME=0.6;
-const trackPlayers=MUSIC_TRACKS.map((src,idx)=>{
+const tracks=MUSIC_TRACKS.map((src,idx)=>{
   const a=new Audio(src);
   a.preload='auto';
   a.dataset.idx=String(idx);
@@ -213,89 +213,79 @@ function updateSoundButton(){
 }
 updateSoundButton();
 
-async function resumeAudioContextIfNeeded(){
+function resumeAudioContextIfNeeded(){
   if(musicCtx && musicCtx.state==='suspended'){
-    try{
-      await musicCtx.resume();
-    }catch(err){
-      console.warn('[music] AudioContext resume blocked on iOS/browser.', err);
-    }
+    musicCtx.resume().catch(()=>{});
   }
 }
-async function unlockAudioOnce(){
+function unlockAudio(){
   if(audioUnlocked) return;
-  await resumeAudioContextIfNeeded();
-  for(const a of trackPlayers){
+  resumeAudioContextIfNeeded();
+  for(const a of tracks){
     const prevMuted=a.muted;
     const prevVol=a.volume;
     a.muted=true;
     a.volume=0;
-    try{
-      await a.play();
-      a.pause();
-      a.currentTime=0;
-    }catch(err){
-      console.warn('[music] Audio unlock failed for track.', err);
-    }finally{
-      a.muted=isMuted||prevMuted;
-      a.volume=prevVol||TRACK_VOLUME;
-    }
+    a.play().catch(()=>{});
+    a.pause();
+    a.currentTime=0;
+    a.muted=isMuted||prevMuted;
+    a.volume=prevVol||TRACK_VOLUME;
   }
   audioUnlocked=true;
 }
 function stopTrack(idx){
-  const a=trackPlayers[idx];
+  const a=tracks[idx];
   if(!a) return;
   a.pause();
   a.currentTime=0;
 }
-async function loadAndPlayTrack(idx){
+function playTrack(idx){
   currentTrackIdx=(idx+MUSIC_TRACKS.length)%MUSIC_TRACKS.length;
-  const a=trackPlayers[currentTrackIdx];
-  a.pause();
-  a.currentTime=0;
+  const a=tracks[currentTrackIdx];
   a.volume=TRACK_VOLUME;
   a.muted=isMuted;
-  await resumeAudioContextIfNeeded();
-  a.load();
+  resumeAudioContextIfNeeded();
   a.play().catch(err=>{
     console.warn('[music] Playback blocked on this device/browser.', err);
   });
 }
 function playNextTrack(){
-  const prev=currentTrackIdx;
-  stopTrack(prev);
-  loadAndPlayTrack((prev+1)%MUSIC_TRACKS.length);
+  stopTrack(currentTrackIdx);
+  currentTrackIdx=(currentTrackIdx+1)%tracks.length;
+  playTrack(currentTrackIdx);
 }
-async function ensureMusicStartedFromStartButton(){
+function ensureMusicStartedFromStartButton(){
   if(musicStarted) return;
-  await loadAndPlayTrack(0);
-  if(trackPlayers[0].paused){
+  playTrack(0);
+  if(tracks[0].paused){
     console.warn('[music] Sound is blocked. Tap START again or check iOS sound settings.');
     return;
   }
   musicStarted=true;
 }
-async function ensureMusicOnRetry(){
+function ensureMusicOnRetry(){
   if(!musicStarted){
-    await loadAndPlayTrack(0);
-    if(!trackPlayers[0].paused) musicStarted=true;
+    playTrack(0);
+    if(!tracks[0].paused) musicStarted=true;
     return;
   }
-  const a=trackPlayers[currentTrackIdx];
+  const a=tracks[currentTrackIdx];
   if(a.paused){
-    a.load();
     a.play().catch(err=>{
       console.warn('[music] Retry play blocked on this device/browser.', err);
     });
   }
 }
 
-trackPlayers.forEach((a,idx)=>{
+tracks.forEach((a,idx)=>{
   a.muted=isMuted;
   a.volume=TRACK_VOLUME;
   a.addEventListener('ended',()=>{
-    if(idx===currentTrackIdx) playNextTrack();
+    if(idx!==currentTrackIdx) return;
+    stopTrack(currentTrackIdx);
+    currentTrackIdx=(currentTrackIdx+1)%tracks.length;
+    playTrack(currentTrackIdx);
   });
   a.addEventListener('error',()=>{
     if(idx===currentTrackIdx){
@@ -307,7 +297,7 @@ trackPlayers.forEach((a,idx)=>{
 soundBtn.addEventListener('click',()=>{
   resumeAudioContextIfNeeded();
   isMuted=!isMuted;
-  trackPlayers.forEach(a=>{a.muted=isMuted;});
+  tracks.forEach(a=>{a.muted=isMuted;});
   localStorage.setItem('mcr6_music_muted',isMuted?'1':'0');
   updateSoundButton();
 });
@@ -320,7 +310,7 @@ nextTrackBtn.addEventListener('click',()=>{
   playNextTrack();
 });
 document.addEventListener('touchstart',()=>{
-  unlockAudioOnce();
+  unlockAudio();
 },{passive:true,once:true});
 
 // Coin types
@@ -389,20 +379,20 @@ C.addEventListener('touchstart',e=>{e.preventDefault();held=true;tap();},{passiv
 C.addEventListener('touchend',e=>{e.preventDefault();held=false;},{passive:false});
 C.addEventListener('mousedown',()=>{held=true;tap();});
 C.addEventListener('mouseup',()=>held=false);
-document.getElementById('btn-start').addEventListener('click',async ()=>{
-  await genieReadyPromise;
-  await unlockAudioOnce();
-  await ensureMusicStartedFromStartButton();
+document.getElementById('btn-start').addEventListener('click',()=>{
+  resumeAudioContextIfNeeded();
+  unlockAudio();
+  ensureMusicStartedFromStartButton();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
   initGame();
   pvy=TAPV();
 });
-document.getElementById('btn-retry').addEventListener('click',async ()=>{
-  await genieReadyPromise;
-  await unlockAudioOnce();
-  await ensureMusicOnRetry();
+document.getElementById('btn-retry').addEventListener('click',()=>{
+  resumeAudioContextIfNeeded();
+  unlockAudio();
+  ensureMusicOnRetry();
   held=false;
   document.getElementById('overlay').classList.add('hidden');
   state='playing';
