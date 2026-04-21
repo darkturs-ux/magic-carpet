@@ -236,60 +236,23 @@ function resumeAudioContextIfNeeded(){
 function unlockAudio(){
   if(audioUnlocked) return;
   resumeAudioContextIfNeeded();
-  audio.pause();
-  audio.currentTime=0;
-  audio.muted=true;
-  audio.volume=0;
-  audio.src=MUSIC_TRACKS[0];
-  audio.load();
-  const unlockPlay=audio.play();
-  if(unlockPlay!==undefined){
-    unlockPlay.then(()=>{
-      audio.pause();
-      audio.currentTime=0;
-      audio.muted=isMuted;
-      audio.volume=TRACK_VOLUME;
-    }).catch(()=>{});
-  }
   audioUnlocked=true;
 }
-let trackSwitchDelayTimer=null;
-let trackPlayFallbackTimer=null;
-let trackSwitchGeneration=0;
-function runPlayWhenReady(gen){
-  if(gen!==trackSwitchGeneration) return;
-  updateTrackIndicator();
-  const playPromise=audio.play();
-  if(playPromise!==undefined){
-    playPromise.catch(err=>console.log('Playback failed',err));
-  }
-}
-// Clean switch: pause, brief wait if something was playing, then src → load → canplay → play() last only.
 function applyPlaybackAtCurrentIndex(){
-  trackSwitchGeneration++;
-  const gen=trackSwitchGeneration;
-  if(trackSwitchDelayTimer) clearTimeout(trackSwitchDelayTimer);
-  if(trackPlayFallbackTimer) clearTimeout(trackPlayFallbackTimer);
-  const wasPlaying=!audio.paused;
+  updateTrackIndicator();
+  resumeAudioContextIfNeeded();
+  // iOS Safari fix: play() must be synchronous in user gesture call-stack.
+  // Do NOT use setTimeout or canplay listeners — they break the gesture chain.
   audio.pause();
-  audio.currentTime=0;
-  const loadAndPlay=()=>{
-    if(gen!==trackSwitchGeneration) return;
-    audio.src=MUSIC_TRACKS[currentTrackIdx];
-    audio.muted=isMuted;
-    audio.volume=TRACK_VOLUME;
-    audio.load();
-    // iOS Safari fix: call play() immediately after load() without waiting for canplay.
-    // Waiting for 'canplay' breaks the user-activation chain on iOS — play() must be
-    // called synchronously (or near-synchronously) after the gesture. load() + play()
-    // back-to-back works on iOS; desktop browsers handle buffering internally via the
-    // play() promise.
-    runPlayWhenReady(gen);
-  };
-  if(wasPlaying){
-    trackSwitchDelayTimer=setTimeout(loadAndPlay,90);
-  } else {
-    trackSwitchDelayTimer=setTimeout(loadAndPlay,0);
+  audio.src=MUSIC_TRACKS[currentTrackIdx];
+  audio.muted=isMuted;
+  audio.volume=TRACK_VOLUME;
+  audio.load();
+  var playPromise=audio.play();
+  if(playPromise!==undefined){
+    playPromise.catch(function(err){
+      console.warn('[music] play() rejected for track '+(currentTrackIdx+1)+':', err.message);
+    });
   }
 }
 function advanceToNextTrack(){
@@ -308,11 +271,11 @@ function ensureMusicOnRetry(){
   }
   applyPlaybackAtCurrentIndex();
 }
-audio.addEventListener('ended',()=>{
+audio.addEventListener('ended',function(){
   advanceToNextTrack();
 });
-audio.addEventListener('error',()=>{
-  console.warn('[music] Track load/playback error (no auto-skip).');
+audio.addEventListener('error',function(){
+  console.warn('[music] Track load/playback error on track '+(currentTrackIdx+1)+'.');
 });
 soundBtn.addEventListener('click',()=>{
   resumeAudioContextIfNeeded();
